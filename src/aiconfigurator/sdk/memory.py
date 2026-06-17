@@ -297,10 +297,9 @@ class KVCacheEstimator:
             moe_quant_mode=moe_quant_mode,
             comm_quant_mode=comm_quant_mode,
         )
-        # Apply nextn/MTP onto the config BEFORE get_model: _get_memory_usage reads
-        # model.config.nextn to scale activation memory for speculative decoding, so
-        # skipping this would size non-KV memory as if nextn=0 and overstate the KV
-        # budget. Mirrors the agg/disagg/static estimate paths in cli.api.
+        # Apply nextn/MTP onto the config BEFORE get_model so the built model is
+        # spec-decode aware (e.g. for any draft-module weights). Mirrors the
+        # agg/disagg/static estimate paths in cli.api.
         _apply_nextn(model_config, nextn, nextn_accept_rates)
         model = get_model(model_path, model_config, backend)
         backend_obj = get_backend(backend)
@@ -309,6 +308,15 @@ class KVCacheEstimator:
         # num_tokens = max_num_tokens -> activations track BuildConfig.max_num_tokens
         # (TRT-LLM `_memory_usage_kwargs_for_agg`). With num_tokens > 0 passed
         # explicitly, isl/osl/max_seq_len only feed the discarded `kvcache` key.
+        #
+        # mtp_activation_scaling=False: max_num_tokens is the engine's per-iteration
+        # token budget, which already caps total per-forward tokens INCLUDING the nextn
+        # draft tokens. The latency sweep's (nextn+1) activation multiplier would
+        # double-count here -- it inflated the prefill worker's non-KV memory past GPU
+        # capacity and drove the KV budget negative once the draft length grew
+        # (AIC-1110). With it suppressed the breakdown is nextn-independent: the draft
+        # module's marginal weight/KV cost (~nextn extra layers) is not separately
+        # modeled, a small, conservative approximation vs. the gross prior over-count.
         memory = backend_obj._get_memory_usage(
             model,
             database,
@@ -319,6 +327,7 @@ class KVCacheEstimator:
             num_tokens=int(max_num_tokens),
             prefix=0,
             max_seq_len=1,
+            mtp_activation_scaling=False,
         )
 
         weights_bytes = float(memory["weights"]) * _ONE_GIB
