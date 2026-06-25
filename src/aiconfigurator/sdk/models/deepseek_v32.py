@@ -56,6 +56,13 @@ class DeepSeekV32Model(BaseModel):
     """
 
     @classmethod
+    def supports_cp(cls, backend_name: str) -> bool:
+        # GLM-5 DSA prefill CP: SGLang AllGather only. CP is modeled INSIDE
+        # ContextDSAModule (_query_cp) + DSA-specific MoE comm, NOT via the
+        # dense _cp_attn_comm_ops / seq_split skeleton.
+        return backend_name == "sglang"
+
+    @classmethod
     def create(cls, model_info: dict, model_config, backend_name: str) -> BaseModel:
         moe_args = (model_info["topk"], model_info["num_experts"], model_info["moe_inter_size"])
         base_args = (
@@ -94,12 +101,12 @@ class DeepSeekV32Model(BaseModel):
         super().__init__(*args)
 
         assert (
-            self.config.tp_size * self.config.attention_dp_size * self.config.attention_cp_size
+            self.config.tp_size * self.config.attention_dp_size * self.config.cp_size
             == self.config.moe_tp_size * self.config.moe_ep_size
         ), (
             f"tp_size ({self.config.tp_size}) * attention_dp_size "
-            f"({self.config.attention_dp_size}) * attention_cp_size "
-            f"({self.config.attention_cp_size}) should be equal to moe_tp_size "
+            f"({self.config.attention_dp_size}) * cp_size "
+            f"({self.config.cp_size}) should be equal to moe_tp_size "
             f"({self.config.moe_tp_size}) * moe_ep_size ({self.config.moe_ep_size})"
         )
         assert num_experts >= self.config.moe_ep_size, f"ep size cannot be larger than num_experts {num_experts}"
@@ -120,7 +127,7 @@ class DeepSeekV32Model(BaseModel):
         moe_tp_size = self.config.moe_tp_size
         moe_ep_size = self.config.moe_ep_size
         attention_dp_size = self.config.attention_dp_size
-        cp_size = self.config.attention_cp_size  # context parallelism (token split, orthogonal to tp)
+        cp_size = self.config.cp_size  # context parallelism (token split, orthogonal to tp)
         pp_size = self.config.pp_size
 
         gemm_quant_mode = self.config.gemm_quant_mode
@@ -147,7 +154,7 @@ class DeepSeekV32Model(BaseModel):
                     fmha_quant_mode,
                     dsa_gemm_quant_mode,
                     architecture=self.architecture,
-                    cp_size=self.config.attention_cp_size,
+                    cp_size=self.config.cp_size,
                 ),
                 ops.ElementWise("context_add_norm_2", self._num_layers, 2 * h, 2 * h, 0.8, scale_num_tokens=cp_size),
                 ops.GEMM(
@@ -189,7 +196,7 @@ class DeepSeekV32Model(BaseModel):
                     attention_dp_size,
                     True,
                     quant_mode=moe_quant_mode,
-                    attn_cp_size=self.config.attention_cp_size,
+                    attn_cp_size=self.config.cp_size,
                 ),
                 ops.MoE(
                     "context_moe",
@@ -215,7 +222,7 @@ class DeepSeekV32Model(BaseModel):
                     attention_dp_size,
                     False,
                     quant_mode=moe_quant_mode,
-                    attn_cp_size=self.config.attention_cp_size,
+                    attn_cp_size=self.config.cp_size,
                 ),
                 ops.GEMM(
                     "context_logits_gemm",
@@ -298,7 +305,7 @@ class DeepSeekV32Model(BaseModel):
                 attention_dp_size,
                 True,
                 quant_mode=moe_quant_mode,
-                attn_cp_size=self.config.attention_cp_size,
+                attn_cp_size=self.config.cp_size,
             ),
             ops.MoE(
                 "generation_moe",
@@ -324,7 +331,7 @@ class DeepSeekV32Model(BaseModel):
                 attention_dp_size,
                 False,
                 quant_mode=moe_quant_mode,
-                attn_cp_size=self.config.attention_cp_size,
+                attn_cp_size=self.config.cp_size,
             ),
         ]
         self.generation_ops.append(
@@ -368,12 +375,12 @@ class TrtllmWideEPDeepSeekV32Model(BaseModel):
         super().__init__(*args)
 
         assert (
-            self.config.tp_size * self.config.attention_dp_size * self.config.attention_cp_size
+            self.config.tp_size * self.config.attention_dp_size * self.config.cp_size
             == self.config.moe_tp_size * self.config.moe_ep_size
         ), (
             f"tp_size ({self.config.tp_size}) * attention_dp_size "
-            f"({self.config.attention_dp_size}) * attention_cp_size "
-            f"({self.config.attention_cp_size}) should be equal to moe_tp_size "
+            f"({self.config.attention_dp_size}) * cp_size "
+            f"({self.config.cp_size}) should be equal to moe_tp_size "
             f"({self.config.moe_tp_size}) * moe_ep_size ({self.config.moe_ep_size})"
         )
         assert num_experts >= self.config.moe_ep_size, f"ep size cannot be larger than num_experts {num_experts}"
@@ -454,7 +461,7 @@ class TrtllmWideEPDeepSeekV32Model(BaseModel):
                     fmha_quant_mode,
                     dsa_gemm_quant_mode,
                     architecture=self.architecture,
-                    cp_size=self.config.attention_cp_size,
+                    cp_size=self.config.cp_size,
                 ),
                 ops.ElementWise("context_add_norm_2", self._num_layers, 2 * h, 2 * h, 0.8),
                 ops.GEMM(
@@ -691,7 +698,7 @@ class WideEPDeepSeekV32Model(BaseModel):
                     fmha_quant_mode,
                     dsa_gemm_quant_mode,
                     architecture=self.architecture,
-                    cp_size=self.config.attention_cp_size,
+                    cp_size=self.config.cp_size,
                 ),
                 *(
                     [
@@ -742,7 +749,7 @@ class WideEPDeepSeekV32Model(BaseModel):
                     attention_dp_size,
                     True,
                     quant_mode=moe_quant_mode,
-                    attn_cp_size=self.config.attention_cp_size,
+                    attn_cp_size=self.config.cp_size,
                     sms=sms,
                     moe_backend=moe_backend,
                     is_context=True,
@@ -810,7 +817,7 @@ class WideEPDeepSeekV32Model(BaseModel):
                     attention_dp_size,
                     True,
                     quant_mode=moe_quant_mode,
-                    attn_cp_size=self.config.attention_cp_size,
+                    attn_cp_size=self.config.cp_size,
                     sms=sms,
                     moe_backend=moe_backend,
                     is_context=False,
