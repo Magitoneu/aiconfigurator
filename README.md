@@ -289,11 +289,17 @@ results/Qwen_Qwen3-32B-FP8_h200_sxm_trtllm_trace_mooncake_tiny_ttft2000_tpot30_9
 ├── agg
 │   ├── best_config_topn.csv
 │   ├── exp_config.yaml
-│   └── pareto.csv
+│   ├── pareto.csv
+│   └── top1
+│       ├── generator_config.yaml
+│       └── spica_candidate.yaml
 ├── disagg
 │   ├── best_config_topn.csv
 │   ├── exp_config.yaml
-│   └── pareto.csv
+│   ├── pareto.csv
+│   └── top1
+│       ├── generator_config.yaml
+│       └── spica_candidate.yaml
 ├── pareto.csv
 ├── pareto_frontier.png
 ├── spica_candidates.csv
